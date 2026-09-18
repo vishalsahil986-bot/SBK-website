@@ -1,102 +1,96 @@
-"""
-Sadabahar Restaurant Chatbot — Conversation Summarizer
-
-Calls the LLM to generate a structured summary of a single user↔bot exchange.
-Each summary captures:
-  - user_intent  : what the user was trying to accomplish
-  - bot_response : what the bot said (condensed)
-  - context      : any important context for future turns
-"""
-
 import json
-from tenacity import retry, stop_after_attempt, wait_exponential
 
-from config.settings import settings
 from utils.logger import logger
 
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(multiplier=1, min=1, max=10),
-)
 async def summarize_conversation(
     user_message: str,
     bot_response: str,
     llm_chain,
 ) -> dict:
     """
-    Summarizes a single conversation turn into a structured dict.
-
-    Args:
-        user_message : The user's message in this turn.
-        bot_response : The bot's response in this turn.
-        llm_chain    : The LangChain LLM chain instance.
-
-    Returns:
-        {
-            "user_intent": str,
-            "bot_response": str,
-            "context": str
-        }
-
-    Falls back to a basic summary if LLM call or JSON parsing fails.
+    Create a short memory summary of one chat exchange.
     """
-    summarization_prompt = f"""
-You are a conversation summarizer for a restaurant chatbot system.
 
-Summarize the following exchange in strict JSON format with exactly these three keys:
-- "user_intent"  : A brief description of what the user wanted or asked (1 sentence).
-- "bot_response" : A brief summary of what the bot replied (1-2 sentences).
-- "context"      : Any useful context that should be remembered for future turns
-                   (e.g., user preferences, items they liked, delivery area, etc.).
+    prompt = f"""
+Summarize this SADA BAHAR KOHISTAN chatbot exchange.
 
-Exchange to summarize:
-USER: {user_message}
-BOT: {bot_response}
+Return ONLY valid JSON:
 
-Respond ONLY with valid JSON. No preamble, no markdown, no explanation.
-Example format:
 {{
-  "user_intent": "User asked about available pizzas.",
-  "bot_response": "Bot listed Margherita and Pepperoni as available options.",
-  "context": "User is interested in pizza. May want to place an order."
+  "user_intent": "short intent",
+  "bot_response": "short response summary",
+  "context": "important context for future follow-ups"
 }}
+
+USER:
+{user_message}
+
+ASSISTANT:
+{bot_response}
 """.strip()
 
     try:
-        raw = await llm_chain.ainvoke({"input": summarization_prompt})
-        raw_text = raw.content if hasattr(raw, "content") else str(raw)
+        # Send STRING directly, not {"input": prompt}
+        response = await llm_chain.ainvoke(prompt)
 
-        # Strip markdown fences if present
+        raw_text = (
+            response.content
+            if hasattr(response, "content")
+            else str(response)
+        )
+
         clean = raw_text.strip()
+
+        # Remove ```json fences if present
         if clean.startswith("```"):
-            clean = clean.split("```")[1]
-            if clean.startswith("json"):
+            clean = clean.split("```", 2)[1]
+
+            if clean.lower().startswith("json"):
                 clean = clean[4:]
-        clean = clean.strip()
+
+            clean = clean.strip()
 
         summary = json.loads(clean)
 
-        # Validate expected keys
-        required_keys = {"user_intent", "bot_response", "context"}
-        if not required_keys.issubset(summary.keys()):
-            raise ValueError(f"Summary missing keys: {required_keys - summary.keys()}")
+        return {
+            "user_intent": str(
+                summary.get(
+                    "user_intent",
+                    "",
+                )
+            )[:150],
 
-        logger.debug(f"Summary generated: {summary}")
-        return summary
+            "bot_response": str(
+                summary.get(
+                    "bot_response",
+                    "",
+                )
+            )[:200],
 
-    except Exception as e:
-        logger.warning(f"Summarization failed ({e}), using fallback summary.")
-        return _fallback_summary(user_message, bot_response)
+            "context": str(
+                summary.get(
+                    "context",
+                    "",
+                )
+            )[:200],
+        }
 
+    except Exception as exc:
+        logger.warning(
+            f"Summarization failed ({exc}), "
+            "using fallback summary."
+        )
 
-def _fallback_summary(user_message: str, bot_response: str) -> dict:
-    """
-    Basic fallback summary used when the LLM summarizer fails.
-    Truncates long strings to keep context lean.
-    """
-    return {
-        "user_intent": user_message[:150],
-        "bot_response": bot_response[:150],
-        "context": "Summary auto-generated due to LLM failure.",
-    }
+        return {
+            "user_intent": (
+                user_message[:150]
+            ),
+            "bot_response": (
+                bot_response[:200]
+            ),
+            "context": (
+                "Previous conversation "
+                "retained using fallback memory."
+            ),
+        }

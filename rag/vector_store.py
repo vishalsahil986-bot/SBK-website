@@ -10,9 +10,12 @@ class PineconeVectorStore:
     def __init__(self):
         self.api_key = settings.pinecone_api_key
         self.index_name = settings.pinecone_index_name
+        self.namespace = settings.pinecone_namespace
 
         if not self.api_key:
-            raise RuntimeError("PINECONE_API_KEY is not configured")
+            raise RuntimeError(
+                "PINECONE_API_KEY is not configured"
+            )
 
         self.client = Pinecone(
             api_key=self.api_key
@@ -24,7 +27,8 @@ class PineconeVectorStore:
 
         logger.info(
             f"Pinecone vector store connected "
-            f"(index={self.index_name})"
+            f"(index={self.index_name}, "
+            f"namespace={self.namespace})"
         )
 
     def query(
@@ -43,6 +47,7 @@ class PineconeVectorStore:
                 vector=embedding,
                 top_k=top_k,
                 include_metadata=True,
+                namespace=self.namespace,
             )
 
             matches = []
@@ -60,13 +65,18 @@ class PineconeVectorStore:
                     {
                         "text": text,
                         "source": source,
-                        "score": float(match.score),
+                        "score": float(
+                            match.score
+                        ),
                     }
                 )
 
             logger.info(
                 f"Retrieved {len(matches)} chunks "
-                f"from Pinecone index '{self.index_name}'"
+                f"from Pinecone index "
+                f"'{self.index_name}' "
+                f"namespace "
+                f"'{self.namespace}'"
             )
 
             return matches
